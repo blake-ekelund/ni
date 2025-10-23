@@ -21,6 +21,7 @@ export default function InventoryUploadModal({
 }: UploadModalProps) {
   const [file, setFile] = React.useState<File | null>(null);
   const [selectedLocation, setSelectedLocation] = React.useState(locations[0] || '');
+  const modalRef = React.useRef<HTMLDivElement>(null);
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const selected = e.target.files?.[0];
@@ -31,6 +32,17 @@ export default function InventoryUploadModal({
     if (file) onUpload(file, selectedLocation);
   };
 
+  // ✅ Close modal when clicking outside
+  React.useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (modalRef.current && !modalRef.current.contains(e.target as Node)) {
+        onClose();
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [onClose]);
+
   if (!isOpen) return null;
 
   return (
@@ -38,14 +50,16 @@ export default function InventoryUploadModal({
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
       exit={{ opacity: 0 }}
-      className="fixed inset-0 bg-black bg-opacity-40 flex items-center justify-center z-50"
+      // ✅ Softer translucent background instead of black
+      className="fixed inset-0 bg-white/50 backdrop-blur-sm flex items-center justify-center z-50"
     >
       <motion.div
+        ref={modalRef}
         initial={{ scale: 0.9, opacity: 0 }}
         animate={{ scale: 1, opacity: 1 }}
         exit={{ scale: 0.9, opacity: 0 }}
         transition={{ duration: 0.2 }}
-        className="bg-white p-6 rounded-xl shadow-lg w-[90%] max-w-md"
+        className="bg-white p-6 rounded-xl shadow-lg w-[90%] max-w-md border border-gray-100"
       >
         <h2 className="text-lg font-semibold text-[#00338d] mb-3">
           Upload Inventory File

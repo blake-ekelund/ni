@@ -1,5 +1,7 @@
 'use client';
 import { motion } from 'framer-motion';
+import { useState, useMemo } from 'react';
+import { ArrowUpDown } from 'lucide-react';
 
 export type InventoryRow = {
   id: string;
@@ -9,15 +11,12 @@ export type InventoryRow = {
   location: string | null;
 };
 
-/**
- * PivotRow = one row per part, dynamic numeric columns (locations) + Total
- */
 export type PivotRow = {
   id: string;
   part: string;
   description: string | null;
   Total: number;
-  [location: string]: string | number | null | undefined; // ✅ more flexible
+  [location: string]: string | number | null | undefined;
 };
 
 type Props = {
@@ -26,13 +25,43 @@ type Props = {
   locations: string[];
 };
 
-/**
- * InventoryTable renders pivoted inventory data:
- * - Each location is a dynamic column
- * - Final column shows totals per part
- * - Footer row shows column totals and grand total
- */
 export default function InventoryTable({ loading, inventory, locations }: Props) {
+  const [sortConfig, setSortConfig] = useState<{ key: string; direction: 'asc' | 'desc' }>({
+    key: 'part',
+    direction: 'asc',
+  });
+
+  // helper: format numbers
+  const formatNumber = (num: number) =>
+    (Number(num) || 0).toLocaleString('en-US', { minimumFractionDigits: 0 });
+
+  const handleSort = (key: string) => {
+    setSortConfig((prev) => {
+      if (prev.key === key) {
+        return { key, direction: prev.direction === 'asc' ? 'desc' : 'asc' };
+      }
+      return { key, direction: 'asc' };
+    });
+  };
+
+  const sortedInventory = useMemo(() => {
+    const { key, direction } = sortConfig;
+    return [...inventory].sort((a, b) => {
+      const valA = a[key];
+      const valB = b[key];
+
+      // handle strings and numbers gracefully
+      if (typeof valA === 'string' && typeof valB === 'string') {
+        return direction === 'asc'
+          ? valA.localeCompare(valB)
+          : valB.localeCompare(valA);
+      }
+      const numA = Number(valA) || 0;
+      const numB = Number(valB) || 0;
+      return direction === 'asc' ? numA - numB : numB - numA;
+    });
+  }, [inventory, sortConfig]);
+
   if (loading) {
     return (
       <div className="flex justify-center items-center h-48 text-gray-500">
@@ -49,9 +78,15 @@ export default function InventoryTable({ loading, inventory, locations }: Props)
     );
   }
 
-  // Helper to format numbers with commas
-  const formatNumber = (num: number) =>
-    (Number(num) || 0).toLocaleString('en-US', { minimumFractionDigits: 0 });
+  const SortButton = ({ label, sortKey }: { label: string; sortKey: string }) => (
+    <button
+      onClick={() => handleSort(sortKey)}
+      className="flex items-center gap-1 text-[#00338d] hover:text-[#007EA7]"
+    >
+      {label}
+      <ArrowUpDown className="w-3 h-3 opacity-60" />
+    </button>
+  );
 
   return (
     <motion.div
@@ -61,29 +96,34 @@ export default function InventoryTable({ loading, inventory, locations }: Props)
       className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-x-auto"
     >
       <table className="min-w-full text-sm">
-        <thead className="bg-[#F6F9FB] text-[#00338d] text-left font-semibold whitespace-nowrap">
+        <thead className="bg-[#F6F9FB] text-left font-semibold whitespace-nowrap">
           <tr>
-            <th className="py-3 px-4">Part</th>
-            <th className="py-3 px-4">Description</th>
+            <th className="py-3 px-4">
+              <SortButton label="SKU" sortKey="part" />
+            </th>
+            <th className="py-3 px-4">
+              <SortButton label="Description" sortKey="description" />
+            </th>
             {locations.map((loc) => (
               <th key={loc} className="py-3 px-4 text-right">
-                {loc}
+                <SortButton label={loc} sortKey={loc} />
               </th>
             ))}
-            <th className="py-3 px-4 text-right">Total</th>
+            <th className="py-3 px-4 text-right">
+              <SortButton label="Total" sortKey="Total" />
+            </th>
           </tr>
         </thead>
 
         <tbody>
-          {inventory.map((row) => (
+          {sortedInventory.map((row) => (
             <tr
               key={row.id}
               className="border-t border-gray-100 hover:bg-[#F6F9FB] transition"
             >
-              <td className="py-3 px-4 font-medium">{row.part}</td>
+              <td className="py-3 px-4 font-medium text-[#00338d]">{row.part}</td>
               <td className="py-3 px-4 text-gray-600">{row.description}</td>
 
-              {/* Per-location values */}
               {locations.map((loc) => (
                 <td
                   key={loc}
@@ -93,7 +133,6 @@ export default function InventoryTable({ loading, inventory, locations }: Props)
                 </td>
               ))}
 
-              {/* Total per part */}
               <td className="py-3 px-4 text-right font-bold text-[#007EA7]">
                 {formatNumber(Number(row.Total) || 0)}
               </td>
@@ -101,16 +140,15 @@ export default function InventoryTable({ loading, inventory, locations }: Props)
           ))}
         </tbody>
 
-        {/* Footer with totals per column and grand total */}
+        {/* Footer Totals */}
         <tfoot className="bg-[#F6F9FB] font-semibold text-[#00338d]">
           <tr>
             <td className="py-3 px-4" colSpan={2}>
               Totals
             </td>
 
-            {/* Location totals */}
             {locations.map((loc) => {
-              const sum = inventory.reduce(
+              const sum = sortedInventory.reduce(
                 (total, row) => total + (Number(row[loc]) || 0),
                 0
               );
@@ -121,10 +159,9 @@ export default function InventoryTable({ loading, inventory, locations }: Props)
               );
             })}
 
-            {/* Grand total */}
             <td className="py-3 px-4 text-right font-bold text-[#007EA7]">
               {formatNumber(
-                inventory.reduce(
+                sortedInventory.reduce(
                   (total, row) => total + (Number(row.Total) || 0),
                   0
                 )

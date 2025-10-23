@@ -1,12 +1,11 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import { motion } from 'framer-motion';
-import { Wrench } from 'lucide-react';
+import { Wrench, ArrowUpDown } from 'lucide-react';
 import { FiltersBar } from './components/FiltersBar';
 import { useComponentData } from './components/useComponentData';
-import { EditComponentModal } from './components/EditComponentModal';
-import { ComponentRecord } from "./components/types";
+import { ComponentRecord } from './components/types';
 
 export default function ComponentsPage() {
   const {
@@ -15,22 +14,61 @@ export default function ComponentsPage() {
     setFilters,
     products,
     components,
-    setComponents,
   } = useComponentData();
 
   const [selectedComponent, setSelectedComponent] = useState<ComponentRecord | null>(null);
 
-  // ✅ Number formatting helper (type-safe)
+  // ---------- sorting ----------
+  const [sortConfig, setSortConfig] = useState<{ key: string; direction: 'asc' | 'desc' }>({
+    key: 'component',
+    direction: 'asc',
+  });
+
+  const handleSort = (key: string) => {
+    setSortConfig((prev) => {
+      if (prev.key === key) {
+        return { key, direction: prev.direction === 'asc' ? 'desc' : 'asc' };
+      }
+      return { key, direction: 'asc' };
+    });
+  };
+
+  const sortedComponents = useMemo(() => {
+    const { key, direction } = sortConfig;
+    return [...components].sort((a, b) => {
+      const valA = (a as any)[key];
+      const valB = (b as any)[key];
+      if (typeof valA === 'string' && typeof valB === 'string') {
+        return direction === 'asc'
+          ? valA.localeCompare(valB)
+          : valB.localeCompare(valA);
+      }
+      const numA = Number(valA) || 0;
+      const numB = Number(valB) || 0;
+      return direction === 'asc' ? numA - numB : numB - numA;
+    });
+  }, [components, sortConfig]);
+
+  // ---------- helpers ----------
   const formatNumber = (value: number | null | undefined): string => {
-    if (value === null || value === undefined || isNaN(value)) {
-      return '—';
-    }
+    if (value === null || value === undefined || isNaN(value)) return '—';
     return new Intl.NumberFormat('en-US', {
       minimumFractionDigits: 0,
       maximumFractionDigits: 0,
     }).format(value);
   };
 
+  const SortHeader = ({ label, sortKey }: { label: string; sortKey: string }) => (
+    <button
+      onClick={() => handleSort(sortKey)}
+      className="flex items-center gap-1 text-[#00338d] hover:text-[#007EA7]"
+    >
+      {label}
+      <ArrowUpDown className="w-3 h-3 opacity-60" />
+    </button>
+  );
+
+  // ---------- render ----------
   return (
     <div className="space-y-6">
       {/* Header */}
@@ -53,7 +91,7 @@ export default function ComponentsPage() {
       >
         {loading ? (
           <div className="p-6 text-gray-500 text-center">Loading...</div>
-        ) : components.length === 0 ? (
+        ) : sortedComponents.length === 0 ? (
           <div className="p-6 text-gray-500 text-center">
             No components match current filters.
           </div>
@@ -61,19 +99,19 @@ export default function ComponentsPage() {
           <table className="w-full text-sm">
             <thead className="bg-[#F6F9FB] text-[#00338d] text-left font-semibold">
               <tr>
-                <th className="py-3 px-4">Component</th>
-                <th className="py-3 px-4">Description</th>
-                <th className="py-3 px-4 text-right">Available</th>
-                <th className="py-3 px-4 text-right">On Order</th>
-                <th className="py-3 px-4 text-right">Lead Time</th>
-                <th className="py-3 px-4 text-right">Min</th>
-                <th className="py-3 px-4 text-right">Max</th>
-                <th className="py-3 px-4 text-right">Min Order</th>
+                <th className="py-3 px-4"><SortHeader label="SKU" sortKey="component" /></th>
+                <th className="py-3 px-4"><SortHeader label="Description" sortKey="description" /></th>
+                <th className="py-3 px-4 text-right"><SortHeader label="Available" sortKey="qty_available" /></th>
+                <th className="py-3 px-4 text-right"><SortHeader label="On Order" sortKey="qty_on_order" /></th>
+                <th className="py-3 px-4 text-right"><SortHeader label="Lead Time" sortKey="lead_time" /></th>
+                <th className="py-3 px-4 text-right"><SortHeader label="Min" sortKey="min_stock" /></th>
+                <th className="py-3 px-4 text-right"><SortHeader label="Max" sortKey="max_stock" /></th>
+                <th className="py-3 px-4 text-right"><SortHeader label="MOQ" sortKey="moq" /></th>
               </tr>
             </thead>
 
             <tbody>
-              {components.map((c) => (
+              {sortedComponents.map((c) => (
                 <tr
                   key={c.id}
                   className="border-t border-gray-100 hover:bg-[#F6F9FB] transition"
@@ -85,33 +123,18 @@ export default function ComponentsPage() {
                     {c.component}
                   </td>
                   <td className="py-3 px-4">{c.description ?? '—'}</td>
-                  <td className="py-3 px-4 text-right">{formatNumber(c.qty_available ?? null)}</td>
-                  <td className="py-3 px-4 text-right">{formatNumber(c.qty_on_order ?? null)}</td>
-                  <td className="py-3 px-4 text-right">{formatNumber(c.lead_time_days ?? null)}</td>
-                  <td className="py-3 px-4 text-right">{formatNumber(c.min_stock ?? null)}</td>
-                  <td className="py-3 px-4 text-right">{formatNumber(c.max_stock ?? null)}</td>
-                  <td className="py-3 px-4 text-right">{formatNumber(c.min_order_qty ?? null)}</td>
+                  <td className="py-3 px-4 text-right">{formatNumber(c.qty_available)}</td>
+                  <td className="py-3 px-4 text-right">{formatNumber(c.qty_on_order)}</td>
+                  <td className="py-3 px-4 text-right">{formatNumber(c.lead_time)}</td>
+                  <td className="py-3 px-4 text-right">{formatNumber(c.min_stock)}</td>
+                  <td className="py-3 px-4 text-right">{formatNumber(c.max_stock)}</td>
+                  <td className="py-3 px-4 text-right">{formatNumber(c.moq)}</td>
                 </tr>
               ))}
             </tbody>
           </table>
         )}
       </motion.div>
-
-      {/* Modal */}
-      {selectedComponent && (
-        <EditComponentModal
-          component={selectedComponent}
-          onClose={() => setSelectedComponent(null)}
-          onSaveSuccess={(updated: ComponentRecord) => {
-            setSelectedComponent(null);
-            // ✅ Instantly update local data without full reload
-            setComponents((prev) =>
-              prev.map((c) => (c.id === updated.id ? updated : c))
-            );
-          }}
-        />
-      )}
     </div>
   );
 }

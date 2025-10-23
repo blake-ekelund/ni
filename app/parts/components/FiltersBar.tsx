@@ -1,7 +1,7 @@
-import { Filter } from 'lucide-react';
-import React from 'react';
+import { Filter, XCircle } from 'lucide-react';
+import React, { useMemo } from 'react';
 
-// Define Product type for type-safe mapping
+// ---------- Types ----------
 type Product = {
   product: string;
   type?: string | null;
@@ -9,7 +9,6 @@ type Product = {
   size?: string | null;
 };
 
-// Define filters state shape
 type Filters = {
   product: string;
   type: string;
@@ -17,25 +16,43 @@ type Filters = {
   size: string;
 };
 
-// Define props for the FiltersBar component
 interface FiltersBarProps {
   filters: Filters;
   setFilters: React.Dispatch<React.SetStateAction<Filters>>;
   products: Product[];
 }
 
+// ---------- Component ----------
 export function FiltersBar({ filters, setFilters, products }: FiltersBarProps) {
-  // Utility: get distinct non-null string values
+  // ✅ Utility: distinct + alphabetical sort
   const distinct = (arr: (string | null | undefined)[]) =>
-    Array.from(new Set(arr.filter(Boolean))) as string[];
+    Array.from(new Set(arr.filter(Boolean) as string[])).sort(
+      (a, b) => a.localeCompare(b)
+    );
 
-  // Build dropdown options dynamically
-  const productOptions = distinct(products.map((p) => p.product));
-  const typeOptions = distinct(products.map((p) => p.type));
-  const fragranceOptions = distinct(products.map((p) => p.fragrance));
-  const sizeOptions = distinct(products.map((p) => p.size));
+  // ✅ Dynamically filtered product list based on other active filters
+  const filteredProducts = useMemo(() => {
+    return products.filter((p) => {
+      const matchProduct =
+        filters.product === 'All' || p.product === filters.product;
+      const matchType = filters.type === 'All' || p.type === filters.type;
+      const matchFragrance =
+        filters.fragrance === 'All' || p.fragrance === filters.fragrance;
+      const matchSize = filters.size === 'All' || p.size === filters.size;
+      return matchProduct && matchType && matchFragrance && matchSize;
+    });
+  }, [products, filters]);
 
-  // Map of filter categories and options
+  // ✅ Build dropdown options dynamically (context-sensitive)
+  const productOptions = distinct(filteredProducts.map((p) => p.product));
+  const typeOptions = distinct(filteredProducts.map((p) => p.type));
+  const fragranceOptions = distinct(filteredProducts.map((p) => p.fragrance));
+  const sizeOptions = distinct(filteredProducts.map((p) => p.size));
+
+  // ✅ Clear Filters
+  const clearFilters = () =>
+    setFilters({ product: 'All', type: 'All', fragrance: 'All', size: 'All' });
+
   const filterConfigs = [
     { key: 'product', options: productOptions },
     { key: 'type', options: typeOptions },
@@ -65,6 +82,15 @@ export function FiltersBar({ filters, setFilters, products }: FiltersBarProps) {
           ))}
         </select>
       ))}
+
+      {/* ✅ Clear Filters Button */}
+      <button
+        onClick={clearFilters}
+        className="flex items-center gap-1 text-sm text-gray-600 hover:text-[#00338d] transition ml-auto"
+      >
+        <XCircle className="w-4 h-4" />
+        Clear
+      </button>
     </div>
   );
 }

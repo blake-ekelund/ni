@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { motion } from 'framer-motion';
 import {
   Package,
@@ -9,6 +9,7 @@ import {
   TrendingDown,
   TrendingUp,
   Circle,
+  Loader2,
 } from 'lucide-react';
 import { supabase } from '@/lib/supabaseClient';
 
@@ -21,7 +22,8 @@ interface InventoryRecord {
   qty_available: number | null;
   min_stock: number | null;
   max_stock: number | null;
-  min_order_qty: number | null;
+  moq: number | null;
+  lead_time?: number | null;
 }
 
 interface InventoryHealth {
@@ -33,7 +35,7 @@ interface InventoryHealth {
 type TabKey = 'inventory' | 'sales' | 'other';
 
 // ─────────────────────────────────────────────
-// Main Dashboard Page
+// Dashboard Page
 // ─────────────────────────────────────────────
 export default function DashboardPage() {
   const [activeTab, setActiveTab] = useState<TabKey>('inventory');
@@ -62,7 +64,7 @@ export default function DashboardPage() {
         ))}
       </div>
 
-      {/* Active Tab Content */}
+      {/* Active Tab */}
       {activeTab === 'inventory' && <InventoryView />}
       {activeTab === 'sales' && <SalesView />}
       {activeTab === 'other' && <OtherView />}
@@ -82,7 +84,7 @@ function InventoryView() {
       const { data, error } = await supabase
         .from('component_inventory_view')
         .select(
-          'component, description, qty_available, min_stock, max_stock, min_order_qty'
+          'component, description, qty_available, min_stock, max_stock, moq, lead_time'
         );
 
       if (error) {
@@ -96,19 +98,9 @@ function InventoryView() {
     fetchInventory();
   }, []);
 
-  if (loading)
-    return <div className="text-gray-500 text-sm mt-2">Loading inventory...</div>;
-
-  if (data.length === 0)
-    return (
-      <div className="text-gray-500 text-sm mt-2">
-        No inventory data found.
-      </div>
-    );
-
-  // classify inventory by stock health
-  const health = data.reduce<InventoryHealth>(
-    (acc, item) => {
+  const health = useMemo<InventoryHealth>(() => {
+    const acc: InventoryHealth = { needsReorder: [], low: [], healthy: [] };
+    for (const item of data) {
       const available = Number(item.qty_available ?? 0);
       const min = Number(item.min_stock ?? 0);
       const max = Number(item.max_stock ?? 0);
@@ -116,31 +108,48 @@ function InventoryView() {
       if (available < min) acc.needsReorder.push(item);
       else if (available < max) acc.low.push(item);
       else acc.healthy.push(item);
+    }
+    return acc;
+  }, [data]);
 
-      return acc;
-    },
-    { needsReorder: [], low: [], healthy: [] }
-  );
+  // KPI summaries
+  const totalSKUs = data.length;
+  const totalAvailable = data.reduce((sum, i) => sum + (i.qty_available ?? 0), 0);
+  const reorderPercent = ((health.needsReorder.length / totalSKUs) * 100).toFixed(1);
+  const avgLeadTimeWeeks = (
+  data.reduce((sum, i) => sum + (i.lead_time ?? 0), 0) / totalSKUs
+).toFixed(1);
+
+  if (loading)
+    return (
+      <div className="flex items-center gap-2 text-gray-500 text-sm mt-2">
+        <Loader2 className="animate-spin w-4 h-4" /> Loading inventory...
+      </div>
+    );
 
   return (
     <motion.section
       initial={{ opacity: 0, y: 15 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.3 }}
-      className="bg-white rounded-2xl p-6 shadow-sm border border-gray-100"
+      className="bg-white rounded-2xl p-6 shadow-sm border border-gray-100 space-y-6"
     >
-      <h2 className="text-lg font-semibold text-[#007EA7] mb-4">
-        Inventory Overview
-      </h2>
+      {/* Title */}
+      <div className="flex justify-between items-center">
+        <h2 className="text-lg font-semibold text-[#007EA7]">Inventory Overview</h2>
+        <p className="text-xs text-gray-500">
+          Total SKUs: {totalSKUs} • Avg Lead Time: {avgLeadTimeWeeks} weeks
+        </p>
+      </div>
 
       {/* Summary cards */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
         <SummaryCard
           color="red"
           icon={<TrendingDown className="text-red-600 w-5 h-5" />}
           title="Needs Reorder"
           count={health.needsReorder.length}
-          subtitle="Below minimum stock"
+          subtitle={`${reorderPercent}% of SKUs`}
         />
         <SummaryCard
           color="yellow"
@@ -158,9 +167,9 @@ function InventoryView() {
         />
       </div>
 
-      {/* Low + reorder table */}
-      <div className="overflow-x-auto">
-        <table className="min-w-full text-sm border border-gray-100 rounded-xl overflow-hidden">
+      {/* Table */}
+      <div className="overflow-x-auto border border-gray-100 rounded-xl">
+        <table className="min-w-full text-sm">
           <thead className="bg-[#F6F9FB] text-[#00338d] font-semibold">
             <tr>
               <th className="py-3 px-4 text-left">Component</th>
@@ -168,7 +177,8 @@ function InventoryView() {
               <th className="py-3 px-4 text-right">Available</th>
               <th className="py-3 px-4 text-right">Min</th>
               <th className="py-3 px-4 text-right">Max</th>
-              <th className="py-3 px-4 text-right">Min Order</th>
+              <th className="py-3 px-4 text-right">MOQ</th>
+              <th className="py-3 px-4 text-right">Lead Time</th>
               <th className="py-3 px-4 text-left">Status</th>
             </tr>
           </thead>
@@ -176,23 +186,26 @@ function InventoryView() {
             {[...health.needsReorder, ...health.low].map((item) => {
               const available = Number(item.qty_available ?? 0);
               const min = Number(item.min_stock ?? 0);
-              const max = Number(item.max_stock ?? 0);
               const status =
                 available < min
-                  ? { text: 'Needs Reorder', color: 'text-red-600' }
-                  : { text: 'Low Stock', color: 'text-yellow-600' };
+                  ? { text: 'Needs Reorder', color: 'text-red-600 bg-red-50' }
+                  : { text: 'Low Stock', color: 'text-yellow-600 bg-yellow-50' };
 
               return (
-                <tr key={item.component} className="border-t border-gray-100">
+                <tr
+                  key={item.component}
+                  className={`border-t border-gray-100 hover:bg-[#F6F9FB] transition`}
+                >
                   <td className="py-2 px-4">{item.component}</td>
                   <td className="py-2 px-4">{item.description ?? '—'}</td>
                   <td className="py-2 px-4 text-right">{available}</td>
                   <td className="py-2 px-4 text-right">{min}</td>
-                  <td className="py-2 px-4 text-right">{max}</td>
-                  <td className="py-2 px-4 text-right">
-                    {item.min_order_qty ?? 0}
-                  </td>
-                  <td className={`py-2 px-4 font-semibold ${status.color}`}>
+                  <td className="py-2 px-4 text-right">{item.max_stock ?? 0}</td>
+                  <td className="py-2 px-4 text-right">{item.moq ?? 0}</td>
+                  <td className="py-2 px-4 text-right">{item.lead_time ?? '—'}</td>
+                  <td
+                    className={`py-2 px-4 font-semibold rounded-md ${status.color}`}
+                  >
                     {status.text}
                   </td>
                 </tr>
@@ -200,6 +213,11 @@ function InventoryView() {
             })}
           </tbody>
         </table>
+      </div>
+
+      {/* Totals */}
+      <div className="text-xs text-gray-500 text-right mt-2">
+        Total Available Units: {totalAvailable.toLocaleString()}
       </div>
     </motion.section>
   );

@@ -3,6 +3,7 @@
 import * as React from 'react';
 import { Boxes, Upload } from 'lucide-react';
 import { supabase } from '@/lib/supabaseClient';
+import toast from 'react-hot-toast';
 import InventoryTable, { InventoryRow, PivotRow } from './components/InventoryTable';
 import InventoryFilters from './components/InventoryFilters';
 import InventoryUploadModal from './components/InventoryUploadModal';
@@ -23,8 +24,12 @@ export default function InventoryPage() {
       .select('id, part, description, available, location')
       .order('uploaded_at', { ascending: false });
 
-    if (error) console.error('Supabase fetch error:', error);
-    else setInventory(data ?? []);
+    if (error) {
+      console.error('Supabase fetch error:', error);
+      toast.error('❌ Failed to load inventory data.');
+    } else {
+      setInventory(data ?? []);
+    }
     setLoading(false);
   };
 
@@ -59,7 +64,7 @@ export default function InventoryPage() {
       const item = map.get(row.part)!;
 
       if (row.location && locs.includes(row.location)) {
-        const qty = Number(row.available) || 0; // ensure numeric
+        const qty = Number(row.available) || 0;
         item[row.location] = qty;
         item.Total += qty;
       }
@@ -72,12 +77,10 @@ export default function InventoryPage() {
 
   // ✅ Determine which location columns to show
   const visibleLocations =
-    selectedFilter === 'All'
-      ? locations
-      : [selectedFilter]; // show only the selected location
+    selectedFilter === 'All' ? locations : [selectedFilter];
 
-  // ✅ Handle file upload
-  const handleUpload = async (file: File, location: string) => {
+  // ✅ Handle file upload (toast version)
+  const handleUpload = async (file: File, location: string): Promise<boolean> => {
     setUploading(true);
     setUploadStatus('⏳ Uploading and processing file...');
 
@@ -93,17 +96,23 @@ export default function InventoryPage() {
 
       const result = await res.json();
 
-      if (result.error) alert(`❌ Upload failed: ${result.error}`);
-      else alert(`✅ Uploaded successfully: ${result.inserted || 0} rows`);
-
-      await fetchInventory();
+      if (result.error) {
+        console.error(result.error);
+        toast.error(`❌ Upload failed: ${result.error}`);
+        return false;
+      } else {
+        toast.success(`✅ Uploaded successfully: ${result.inserted || 0} rows`);
+        await fetchInventory();
+        return true;
+      }
     } catch (err) {
       console.error(err);
-      alert('❌ Upload failed due to network or server error.');
+      toast.error('❌ Upload failed due to network or server error.');
+      return false;
     } finally {
       setUploading(false);
-      setShowUploadModal(false);
       setUploadStatus(null);
+      setShowUploadModal(false);
     }
   };
 

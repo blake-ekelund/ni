@@ -2,7 +2,7 @@
 
 import * as React from 'react';
 import { motion } from 'framer-motion';
-import { Package, Plus, Filter } from 'lucide-react';
+import { Package, Plus, Filter, ArrowUpDown } from 'lucide-react';
 import { supabase } from '@/lib/supabaseClient';
 
 // ─────────────────────────────
@@ -58,8 +58,39 @@ export default function ProductsPage() {
     status: 'Active',
   });
 
-  const handleChange = (key: keyof Filters, value: string) =>
-    setFilters((prev) => ({ ...prev, [key]: value }));
+  // sorting state
+  const [sortConfig, setSortConfig] = React.useState<{
+    key: string;
+    direction: 'asc' | 'desc';
+  }>({ key: 'part', direction: 'asc' });
+
+  const handleSort = (key: string) => {
+    setSortConfig((prev) =>
+      prev.key === key
+        ? { key, direction: prev.direction === 'asc' ? 'desc' : 'asc' }
+        : { key, direction: 'asc' }
+    );
+  };
+
+  const SortHeader = ({
+    label,
+    sortKey,
+    alignRight,
+  }: {
+    label: string;
+    sortKey: string;
+    alignRight?: boolean;
+  }) => (
+    <button
+      onClick={() => handleSort(sortKey)}
+      className={`flex items-center gap-1 ${
+        alignRight ? 'justify-end' : ''
+      } text-[#00338d] hover:text-[#007EA7]`}
+    >
+      {label}
+      <ArrowUpDown className="w-3 h-3 opacity-60" />
+    </button>
+  );
 
   // ✅ Fetch products from Supabase
   const fetchProducts = async () => {
@@ -71,11 +102,8 @@ export default function ProductsPage() {
       )
       .order('created_at', { ascending: false });
 
-    if (error) {
-      console.error('❌ Supabase fetch error:', error);
-    } else {
-      setProducts((data as ProductRecord[]) ?? []);
-    }
+    if (error) console.error('❌ Supabase fetch error:', error);
+    else setProducts((data as ProductRecord[]) ?? []);
     setLoading(false);
   };
 
@@ -83,18 +111,33 @@ export default function ProductsPage() {
     fetchProducts();
   }, []);
 
-  // ✅ Filtered view (client-side)
+  // ✅ Filtered + Sorted view
   const filteredProducts = React.useMemo(() => {
-    return products.filter((p) => {
+    const base = products.filter((p) => {
       const matchProduct =
         filters.product === 'All' || p.product === filters.product;
       const matchFragrance =
         filters.fragrance === 'All' || p.fragrance === filters.fragrance;
       const matchType = filters.type === 'All' || p.type === filters.type;
-      const matchStatus = filters.status === 'All' || p.status === filters.status;
+      const matchStatus =
+        filters.status === 'All' || p.status === filters.status;
       return matchProduct && matchFragrance && matchType && matchStatus;
     });
-  }, [products, filters]);
+
+    const { key, direction } = sortConfig;
+    return [...base].sort((a, b) => {
+      const valA = (a as any)[key];
+      const valB = (b as any)[key];
+      if (typeof valA === 'string' && typeof valB === 'string') {
+        return direction === 'asc'
+          ? valA.localeCompare(valB)
+          : valB.localeCompare(valA);
+      }
+      const numA = Number(valA) || 0;
+      const numB = Number(valB) || 0;
+      return direction === 'asc' ? numA - numB : numB - numA;
+    });
+  }, [products, filters, sortConfig]);
 
   // ✅ Add new product
   const handleAddProduct = async () => {
@@ -142,14 +185,15 @@ export default function ProductsPage() {
         {/* Filters + Add Button */}
         <div className="flex items-center gap-3 mt-4 sm:mt-0">
           <Filter className="w-5 h-5 text-gray-500" />
-
           {(['product', 'fragrance', 'type', 'status'] as (keyof Filters)[]).map(
             (key) => (
               <select
                 key={key}
                 className="border border-gray-300 rounded-md px-3 py-1.5 text-sm bg-white hover:border-[#5EC3E3] focus:outline-none"
                 value={filters[key]}
-                onChange={(e) => handleChange(key, e.target.value)}
+                onChange={(e) =>
+                  setFilters((prev) => ({ ...prev, [key]: e.target.value }))
+                }
               >
                 <option>All</option>
                 {key === 'status' ? (
@@ -188,21 +232,35 @@ export default function ProductsPage() {
         {loading ? (
           <div className="p-6 text-gray-500 text-center">Loading...</div>
         ) : filteredProducts.length === 0 ? (
-          <div className="p-6 text-gray-500 text-center">
-            No products found.
-          </div>
+          <div className="p-6 text-gray-500 text-center">No products found.</div>
         ) : (
           <table className="w-full text-sm">
             <thead className="bg-[#F6F9FB] text-[#00338d] text-left font-semibold">
               <tr>
-                <th className="py-3 px-4">Part</th>
-                <th className="py-3 px-4">Product</th>
-                <th className="py-3 px-4">Type</th>
-                <th className="py-3 px-4">Fragrance</th>
-                <th className="py-3 px-4">Size</th>
-                <th className="py-3 px-4">Other</th>
-                <th className="py-3 px-4">BOM</th>
-                <th className="py-3 px-4">Status</th>
+                <th className="py-3 px-4">
+                  <SortHeader label="SKU" sortKey="part" />
+                </th>
+                <th className="py-3 px-4">
+                  <SortHeader label="Product" sortKey="product" />
+                </th>
+                <th className="py-3 px-4">
+                  <SortHeader label="Type" sortKey="type" />
+                </th>
+                <th className="py-3 px-4">
+                  <SortHeader label="Fragrance" sortKey="fragrance" />
+                </th>
+                <th className="py-3 px-4">
+                  <SortHeader label="Size" sortKey="size" />
+                </th>
+                <th className="py-3 px-4">
+                  <SortHeader label="Other" sortKey="other" />
+                </th>
+                <th className="py-3 px-4">
+                  <SortHeader label="BOM" sortKey="bom" />
+                </th>
+                <th className="py-3 px-4">
+                  <SortHeader label="Status" sortKey="status" />
+                </th>
                 <th className="py-3 px-4 text-right">Actions</th>
               </tr>
             </thead>
@@ -221,7 +279,9 @@ export default function ProductsPage() {
                   <td className="py-3 px-4">{p.bom}</td>
                   <td
                     className={`py-3 px-4 font-semibold ${
-                      p.status === 'Active' ? 'text-green-700' : 'text-red-600'
+                      p.status === 'Active'
+                        ? 'text-green-700'
+                        : 'text-red-600'
                     }`}
                   >
                     {p.status}
@@ -238,7 +298,7 @@ export default function ProductsPage() {
         )}
       </motion.div>
 
-      {/* Add Product Modal */}
+      {/* Add Product Modal (unchanged) */}
       {showAddModal && (
         <div className="fixed inset-0 bg-black bg-opacity-40 flex items-center justify-center z-50">
           <div className="bg-white p-6 rounded-xl shadow-lg w-[90%] max-w-md">
