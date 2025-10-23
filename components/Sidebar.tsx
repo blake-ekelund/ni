@@ -11,6 +11,7 @@ import {
   Settings,
   HelpCircle,
   LogOut,
+  Component,
 } from 'lucide-react';
 
 // Brand-inspired palette from the image
@@ -23,6 +24,7 @@ const colors = {
 
 const navItems = [
   { name: 'Dashboard', href: '/', icon: LayoutDashboard },
+  { name: 'Components', href: '/parts', icon: Component },
   { name: 'Products', href: '/products', icon: Package },
   { name: 'Inventory', href: '/inventory', icon: Boxes },
   { name: 'Sales', href: '/sales', icon: LineChart },
