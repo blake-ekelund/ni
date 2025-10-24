@@ -55,21 +55,22 @@ export default function SalesYTDTableBase({
     setExpanded(newSet);
   };
 
-  // ────────────── Helper: Aggregate ──────────────
-  const getYearlyData = (year: number) => {
-    const filtered = salesData.filter(
-      (s) => new Date(s.period).getFullYear() === year
-    );
-    const maxMonth = Math.max(
-      ...filtered.map((s) => new Date(s.period).getMonth()),
-      0
-    );
-    return filtered.filter((s) => new Date(s.period).getMonth() <= maxMonth);
-  };
+  // ────────────── Helper: YTD Alignment ──────────────
+  const getMonth = (date: string) => new Date(date).getMonth();
+  const getYear = (date: string) => new Date(date).getFullYear();
 
-  const currentYTD = getYearlyData(currentYear);
-  const priorYTD = getYearlyData(priorYear);
+  // Current year data
+  const currentYearData = salesData.filter((s) => getYear(s.period) === currentYear);
+  const priorYearData = salesData.filter((s) => getYear(s.period) === priorYear);
 
+  // Determine max available month in current year (for YTD cutoff)
+  const maxMonthCurrentYear = Math.max(...currentYearData.map((s) => getMonth(s.period)), 0);
+
+  // Limit both datasets to YTD cutoff
+  const currentYTD = currentYearData.filter((s) => getMonth(s.period) <= maxMonthCurrentYear);
+  const priorYTD = priorYearData.filter((s) => getMonth(s.period) <= maxMonthCurrentYear);
+
+  // ────────────── Aggregation ──────────────
   const aggregate = (data: typeof salesData) => {
     const map = new Map<
       string,
@@ -177,22 +178,17 @@ export default function SalesYTDTableBase({
     const arr = Object.values(grouped);
     const { key, direction } = sortConfig;
     return arr.sort((a, b) => {
-        const valA = a[key] as string | number;
-        const valB = b[key] as string | number;
+      const valA = a[key] as string | number;
+      const valB = b[key] as string | number;
 
-        // String sort
-        if (typeof valA === 'string' && typeof valB === 'string') {
-            return direction === 'asc'
-            ? valA.localeCompare(valB)
-            : valB.localeCompare(valA);
-        }
+      if (typeof valA === 'string' && typeof valB === 'string') {
+        return direction === 'asc' ? valA.localeCompare(valB) : valB.localeCompare(valA);
+      }
 
-        // Numeric sort (treat non-numbers as 0)
-        const numA = typeof valA === 'number' ? valA : 0;
-        const numB = typeof valB === 'number' ? valB : 0;
-        return direction === 'asc' ? numA - numB : numB - numA;
-        });
-
+      const numA = typeof valA === 'number' ? valA : 0;
+      const numB = typeof valB === 'number' ? valB : 0;
+      return direction === 'asc' ? numA - numB : numB - numA;
+    });
   }, [grouped, sortConfig]);
 
   const requestSort = (key: SortKey) => {
@@ -216,7 +212,10 @@ export default function SalesYTDTableBase({
     <div className="bg-white border border-gray-100 rounded-xl shadow-sm mt-8">
       <div className="px-5 py-3 border-b border-gray-100 flex items-center justify-between">
         <h2 className="text-sm font-semibold text-gray-700">{title}</h2>
-        <span className="text-xs text-gray-400">{sorted.length} {groupBy === 'none' ? 'SKUs' : groupBy === 'product' ? 'Products' : 'Fragrances'}</span>
+        <span className="text-xs text-gray-400">
+          {sorted.length}{' '}
+          {groupBy === 'none' ? 'SKUs' : groupBy === 'product' ? 'Products' : 'Fragrances'}
+        </span>
       </div>
 
       <div className="overflow-x-auto">
@@ -326,7 +325,9 @@ export default function SalesYTDTableBase({
                           ? child.product_name
                           : groupBy === 'product'
                           ? `${child.sku} — ${child.fragrance ?? '—'}`
-                          : `${child.sku} | ${child.product_name} | ${child.fragrance ?? '—'}`}
+                          : `${child.sku} | ${child.product_name} | ${
+                              child.fragrance ?? '—'
+                            }`}
                       </td>
                       <td className="px-5 py-2 text-right text-gray-700">
                         ${Math.round(child.current_sales).toLocaleString()}
