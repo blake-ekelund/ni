@@ -1,205 +1,277 @@
 'use client';
 
-import { useState } from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
-import { LineChart, Filter, Upload } from 'lucide-react';
+import { useState, useEffect, useMemo } from 'react';
+import SalesFilters from './components/SalesFilters';
+import SalesSummaryCards from './components/SalesSummaryCards';
+import SalesChartYearly from './components/SalesChartYearly';
+import SalesTable from './components/SalesTable';
+import ExportButton from './components/ExportButton';
+import SalesUploadModal from './components/SalesUploadModal';
+import { supabase } from '@/lib/supabaseClient';
+import toast from 'react-hot-toast';
 
+// ─────────────────────────────
+// Types
+// ─────────────────────────────
+interface SalesRecord {
+  id: string;
+  created_at: string;
+  product_code: string;
+  product_name: string | null;
+  description: string | null;
+  fragrance: string | null;
+  type: string | null;
+  other: string | null;
+  size: string | null;
+  status: string | null;
+  qty: number;
+  sales: number;
+  period: string;
+}
+
+interface Filters {
+  product: string[];
+  type: string[];
+  fragrance: string[];
+}
+
+// ─────────────────────────────
+// Page Component
+// ─────────────────────────────
 export default function SalesPage() {
-  const [filters, setFilters] = useState({
-    customer: 'All',
-    productType: 'All',
-    fragrance: 'All',
+  const [salesData, setSalesData] = useState<SalesRecord[]>([]);
+  const [chartData, setChartData] = useState<
+    { month_name: string; current_year_sales: number; prior_year_sales: number }[]
+  >([]);
+  const [filters, setFilters] = useState<Filters>({
+    product: [],
+    type: [],
+    fragrance: [],
   });
+  const [loading, setLoading] = useState(true);
   const [showUploadModal, setShowUploadModal] = useState(false);
+  const [uploading, setUploading] = useState(false);
 
-  const handleChange = (key: string, value: string) =>
-    setFilters((prev) => ({ ...prev, [key]: value }));
+  const [selectedView, setSelectedView] = useState<'product' | 'fragrance' | 'none'>('product');
 
-  // --- Fake Sales Data (only finished goods) ---
-  const sales = [
-    {
-      id: 1,
-      product: 'Sea Salt Citrus Body Oil',
-      fragrance: 'Sea Salt Citrus',
-      quantity: 480,
-      totalSales: 48000,
-    },
-    {
-      id: 2,
-      product: 'Lavender Hand Cream',
-      fragrance: 'Lavender',
-      quantity: 320,
-      totalSales: 19200,
-    },
-    {
-      id: 3,
-      product: 'Pomegranate Lotion',
-      fragrance: 'Pomegranate',
-      quantity: 220,
-      totalSales: 15400,
-    },
-  ];
+  const currentYear = new Date().getFullYear();
+  const priorYear = currentYear - 1;
 
-  const totalRevenue = sales.reduce((sum, s) => sum + s.totalSales, 0);
-  const avgOrderValue = (totalRevenue / sales.length).toFixed(2);
-  const topProduct = sales.sort((a, b) => b.totalSales - a.totalSales)[0].product;
+  // ─────────────────────────────
+  // Fetch sales (YTD current + prior year) — batched + multi-filter
+  // ─────────────────────────────
+  useEffect(() => {
+    const fetchData = async () => {
+      setLoading(true);
 
+      const startDate = `${priorYear}-01-01`;
+      const endDate = new Date().toISOString().split('T')[0];
+      const batchSize = 1000;
+      let from = 0;
+      let allRows: SalesRecord[] = [];
+
+      while (true) {
+        let query = supabase
+          .from('sales_data_view')
+          .select('*', { count: 'exact' })
+          .gte('period', startDate)
+          .lte('period', endDate)
+          .range(from, from + batchSize - 1);
+
+        if (filters.product.length) query = query.in('product_name', filters.product);
+        if (filters.type.length) query = query.in('type', filters.type);
+        if (filters.fragrance.length) query = query.in('fragrance', filters.fragrance);
+
+        const { data, error } = await query;
+
+        if (error) {
+          console.error('❌ Supabase batch error:', error);
+          toast.error('❌ Failed to fetch sales data.');
+          break;
+        }
+
+        if (!data?.length) break;
+        allRows = allRows.concat(data);
+
+        if (data.length < batchSize) break;
+        from += batchSize;
+      }
+
+      setSalesData(allRows);
+      setLoading(false);
+    };
+
+    fetchData();
+  }, [filters, priorYear]);
+
+  // ─────────────────────────────
+  // Build month-by-month chart
+  // ─────────────────────────────
+  useEffect(() => {
+    if (!salesData.length) {
+      setChartData([]);
+      return;
+    }
+
+    const grouped: Record<number, Record<number, number>> = {};
+    for (const row of salesData) {
+      const d = new Date(row.period);
+      const y = d.getFullYear();
+      const m = d.getMonth();
+      if (!grouped[y]) grouped[y] = {};
+      grouped[y][m] = (grouped[y][m] || 0) + (row.sales ?? 0);
+    }
+
+    const data = Array.from({ length: 12 }, (_, m) => ({
+      month_name: new Date(0, m).toLocaleString('en-US', { month: 'short' }),
+      current_year_sales: grouped[currentYear]?.[m] ?? 0,
+      prior_year_sales: grouped[priorYear]?.[m] ?? 0,
+    }));
+
+    setChartData(data);
+  }, [salesData, currentYear, priorYear]);
+
+  // ─────────────────────────────
+  // Upload Handler
+  // ─────────────────────────────
+  const handleUpload = async (file: File, period: string): Promise<boolean> => {
+    setUploading(true);
+    try {
+      const formData = new FormData();
+      formData.append('file', file);
+      formData.append('period', period);
+
+      const res = await fetch('/api/upload-sales', { method: 'POST', body: formData });
+      const result = await res.json();
+
+      if (!res.ok || result.error) {
+        toast.error(`❌ Upload failed: ${result.error}`);
+        return false;
+      }
+
+      toast.success(`✅ Uploaded ${result.inserted} records for ${result.period}`);
+      return true;
+    } catch (err) {
+      console.error('Upload error:', err);
+      toast.error('❌ Network or server error.');
+      return false;
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  // ─────────────────────────────
+  // Render
+  // ─────────────────────────────
   return (
-    <div className="space-y-6">
-      {/* Header */}
-      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center">
-        <div className="flex items-center gap-2">
-          <LineChart className="w-6 h-6 text-[#00338d]" />
-          <h1 className="text-2xl font-semibold text-[#00338d] tracking-tight">
-            Sales
-          </h1>
+    <div className="space-y-8">
+      {/* Page Header */}
+      <div className="space-y-1">
+        <h1 className="text-2xl font-semibold text-gray-900">Sales</h1>
+        <p className="text-gray-500 text-sm max-w-7xl">
+          Review year-to-date (YTD) sales performance across products, fragrances, and categories.
+          Compare current-year results against prior-year benchmarks to identify growth trends and opportunities.
+        </p>
+      </div>
+
+      {/* Toolbar */}
+      <div className="flex flex-wrap items-center justify-between gap-4 border-b border-gray-200 pb-3">
+        <div className="flex-1">
+          <SalesFilters filters={filters} setFilters={setFilters} salesData={salesData} />
         </div>
 
-        {/* Filters + Upload */}
-        <div className="flex flex-wrap items-center gap-3 mt-4 sm:mt-0">
-          <Filter className="w-5 h-5 text-gray-500" />
-
-          <select
-            className="border border-gray-300 rounded-md px-3 py-1.5 text-sm bg-white hover:border-[#5EC3E3]"
-            value={filters.productType}
-            onChange={(e) => handleChange('productType', e.target.value)}
-          >
-            <option>All Product Types</option>
-            <option>Body Oil</option>
-            <option>Hand Cream</option>
-            <option>Lotion</option>
-          </select>
-
-          <select
-            className="border border-gray-300 rounded-md px-3 py-1.5 text-sm bg-white hover:border-[#5EC3E3]"
-            value={filters.fragrance}
-            onChange={(e) => handleChange('fragrance', e.target.value)}
-          >
-            <option>All Fragrances</option>
-            <option>Sea Salt Citrus</option>
-            <option>Lavender</option>
-            <option>Pomegranate</option>
-          </select>
-
+        <div className="flex gap-3 shrink-0">
           <button
             onClick={() => setShowUploadModal(true)}
-            className="flex items-center gap-2 bg-[#007EA7] text-white px-3 py-1.5 rounded-md text-sm hover:bg-[#006A90] transition"
+            className="flex items-center gap-2 bg-[#007EA7] text-white px-4 py-2 rounded-md text-sm font-medium hover:bg-[#006A90] transition"
           >
-            <Upload className="w-4 h-4" />
             Upload Sales
           </button>
+          <ExportButton data={salesData} />
         </div>
       </div>
 
-      {/* Summary Cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+      {/* Summary + Chart */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+        <div className="lg:col-span-1">
+          <SalesSummaryCards
+            currentYear={currentYear}
+            priorYear={priorYear}
+            salesData={salesData.map((s) => ({
+              qty: s.qty,
+              sales: s.sales,
+              period: s.period,
+            }))}
+          />
+        </div>
+
+        <div className="lg:col-span-2">
+          <SalesChartYearly data={chartData} currentYear={currentYear} priorYear={priorYear} />
+        </div>
+      </div>
+
+      {/* Table Selector */}
+      <div className="mt-8 flex items-center gap-2">
+        <span className="text-sm text-gray-600 font-medium">View:</span>
         {[
-          { label: 'Total Revenue', value: `$${totalRevenue.toLocaleString()}` },
-          { label: 'Average Order Value', value: `$${avgOrderValue}` },
-          { label: 'Top Product', value: topProduct },
-        ].map((stat) => (
-          <motion.div
-            key={stat.label}
-            initial={{ opacity: 0, y: 10 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.3 }}
-            className="bg-white p-4 rounded-xl border border-gray-100 shadow-sm hover:shadow-md transition"
+          { label: 'By Product', key: 'product' },
+          { label: 'By Fragrance', key: 'fragrance' },
+          { label: 'All SKUs', key: 'none' },
+        ].map((opt) => (
+          <button
+            key={opt.key}
+            onClick={() => setSelectedView(opt.key as 'product' | 'fragrance' | 'none')}
+            className={`px-3 py-1.5 text-sm rounded-md border transition ${
+              selectedView === opt.key
+                ? 'bg-[#00338d] text-white border-[#00338d]'
+                : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'
+            }`}
           >
-            <div className="text-sm text-gray-500">{stat.label}</div>
-            <div className="text-2xl font-semibold text-[#00338d] mt-1 truncate">
-              {stat.value}
-            </div>
-          </motion.div>
+            {opt.label}
+          </button>
         ))}
       </div>
 
-      {/* Sales Table */}
-      <motion.div
-        initial={{ opacity: 0, y: 15 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.3 }}
-        className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden"
-      >
-        <table className="w-full text-sm">
-          <thead className="bg-[#F6F9FB] text-[#00338d] text-left font-semibold">
-            <tr>
-              <th className="py-3 px-4">Product</th>
-              <th className="py-3 px-4">Fragrance</th>
-              <th className="py-3 px-4 text-right">Quantity Sold</th>
-              <th className="py-3 px-4 text-right">Total Sales</th>
-            </tr>
-          </thead>
-          <tbody>
-            {sales.map((s) => (
-              <tr
-                key={s.id}
-                className="border-t border-gray-100 hover:bg-[#F6F9FB] transition"
-              >
-                <td className="py-3 px-4 font-medium">{s.product}</td>
-                <td className="py-3 px-4 text-gray-600">{s.fragrance}</td>
-                <td className="py-3 px-4 text-right">{s.quantity}</td>
-                <td className="py-3 px-4 text-right font-semibold text-[#007EA7]">
-                  ${s.totalSales.toLocaleString()}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </motion.div>
+      {/* Conditional Table Rendering */}
+      <div className="mt-4">
+        {selectedView === 'product' && (
+          <SalesTable
+            title="Performance by Product"
+            salesData={salesData}
+            currentYear={currentYear}
+            priorYear={priorYear}
+            groupBy="product"
+          />
+        )}
+
+        {selectedView === 'fragrance' && (
+          <SalesTable
+            title="Performance by Fragrance"
+            salesData={salesData}
+            currentYear={currentYear}
+            priorYear={priorYear}
+            groupBy="fragrance"
+          />
+        )}
+
+        {selectedView === 'none' && (
+          <SalesTable
+            title="Performance by SKU"
+            salesData={salesData}
+            currentYear={currentYear}
+            priorYear={priorYear}
+            groupBy="none"
+          />
+        )}
+      </div>
 
       {/* Upload Modal */}
-      <AnimatePresence>
-        {showUploadModal && (
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            className="fixed inset-0 bg-black bg-opacity-40 flex items-center justify-center z-50"
-          >
-            <motion.div
-              initial={{ scale: 0.9, opacity: 0 }}
-              animate={{ scale: 1, opacity: 1 }}
-              exit={{ scale: 0.9, opacity: 0 }}
-              transition={{ duration: 0.2 }}
-              className="bg-white p-6 rounded-xl shadow-lg w-[90%] max-w-md"
-            >
-              <h2 className="text-lg font-semibold text-[#00338d] mb-3">
-                Upload Sales Data
-              </h2>
-              <p className="text-sm text-gray-500 mb-4">
-                Choose a sales file to upload (.csv or .xlsx).  
-                This will overwrite or append new finished goods sales.
-              </p>
-
-              <div className="space-y-4">
-                <input
-                  type="file"
-                  accept=".csv,.xlsx"
-                  className="block w-full border border-gray-300 rounded-md px-3 py-2 text-sm"
-                />
-              </div>
-
-              <div className="flex justify-end gap-3 mt-6">
-                <button
-                  onClick={() => setShowUploadModal(false)}
-                  className="px-4 py-2 text-sm text-gray-600 hover:text-gray-800"
-                >
-                  Cancel
-                </button>
-                <button
-                  onClick={() => {
-                    console.log('Uploading sales file...');
-                    setShowUploadModal(false);
-                  }}
-                  className="px-4 py-2 text-sm rounded-md bg-[#007EA7] text-white hover:bg-[#006A90]"
-                >
-                  Upload
-                </button>
-              </div>
-            </motion.div>
-          </motion.div>
-        )}
-      </AnimatePresence>
+      <SalesUploadModal
+        isOpen={showUploadModal}
+        onClose={() => setShowUploadModal(false)}
+        onUpload={handleUpload}
+        uploading={uploading}
+      />
     </div>
   );
 }
