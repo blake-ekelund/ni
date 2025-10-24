@@ -1,5 +1,6 @@
 'use client';
 
+import { useEffect, useState } from 'react';
 import { motion } from 'framer-motion';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
@@ -13,10 +14,11 @@ import {
   LogOut,
   Component,
 } from 'lucide-react';
+import { supabase } from '@/lib/supabaseClient'; // make sure this is imported
 
 // Brand-inspired palette from the image
 const colors = {
-  blue: '#5EC3E3', // ocean tone
+  blue: '#5EC3E3',
   darkBlue: '#007EA7',
   lightGray: '#F6F9FB',
   white: '#FFFFFF',
@@ -34,6 +36,37 @@ const navItems = [
 
 export default function Sidebar() {
   const pathname = usePathname();
+  const [hasNewMessage, setHasNewMessage] = useState(false);
+
+  // ─────────────────────────────
+  // Supabase realtime listener
+  // ─────────────────────────────
+  useEffect(() => {
+    const channel = supabase
+      .channel('collaborate_messages_sidebar')
+      .on(
+        'postgres_changes',
+        { event: 'INSERT', schema: 'public', table: 'collaborate_messages' },
+        (payload) => {
+          // only show alert if user isn't on /collaborate
+          if (pathname !== '/collaborate') {
+            setHasNewMessage(true);
+          }
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [pathname]);
+
+  // ─────────────────────────────
+  // Reset indicator when visiting /collaborate
+  // ─────────────────────────────
+  useEffect(() => {
+    if (pathname === '/collaborate') setHasNewMessage(false);
+  }, [pathname]);
 
   return (
     <aside
@@ -54,6 +87,8 @@ export default function Sidebar() {
         <nav className="flex flex-col">
           {navItems.map(({ name, href, icon: Icon }) => {
             const active = pathname === href;
+            const isCollaborate = name === 'Collaborate';
+
             return (
               <Link key={name} href={href} className="relative group">
                 <motion.div
@@ -65,11 +100,17 @@ export default function Sidebar() {
                   whileHover={{ backgroundColor: colors.lightGray }}
                   className="flex items-center gap-3 px-5 py-2.5 rounded-lg mx-2 mb-1 cursor-pointer transition-colors"
                 >
-                  <Icon
-                    className={`w-5 h-5 ${
-                      active ? 'text-emerald-700' : 'text-gray-500'
-                    } group-hover:text-emerald-700 transition-colors`}
-                  />
+                  <div className="relative">
+                    <Icon
+                      className={`w-5 h-5 ${
+                        active ? 'text-emerald-700' : 'text-gray-500'
+                      } group-hover:text-emerald-700 transition-colors`}
+                    />
+                    {/* Red dot indicator */}
+                    {isCollaborate && hasNewMessage && !active && (
+                      <span className="absolute -top-1 -right-1 w-2 h-2 bg-red-500 rounded-full animate-pulse" />
+                    )}
+                  </div>
                   <span className="text-sm font-medium">{name}</span>
                 </motion.div>
               </Link>

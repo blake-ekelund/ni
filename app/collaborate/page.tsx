@@ -3,42 +3,91 @@
 import { useState, useRef, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import { Send, MessageSquare } from 'lucide-react';
+import { supabase } from '@/lib/supabaseClient';
+
+interface Message {
+  id: string;
+  sender: string;
+  text: string;
+  timestamp: string;
+  created_at: string;
+}
 
 export default function HelpDeskPage() {
-  const [messages, setMessages] = useState([
-    {
-      id: 1,
-      sender: 'Blake',
-      text: 'Hey everyone — quick question: how do we upload sales data?',
-      timestamp: '10:31 AM',
-    },
-    {
-      id: 2,
-      sender: 'Liz',
-      text: 'You can do that right from the Sales page now!',
-      timestamp: '10:32 AM',
-    },
-  ]);
-
+  const [messages, setMessages] = useState<Message[]>([]);
   const [newMessage, setNewMessage] = useState('');
   const chatEndRef = useRef<HTMLDivElement>(null);
 
-  const sendMessage = () => {
-    if (!newMessage.trim()) return;
-    const newMsg = {
-      id: Date.now(),
-      sender: 'You',
-      text: newMessage,
-      timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-    };
-    setMessages((prev) => [...prev, newMsg]);
-    setNewMessage('');
-  };
+  // ─────────────────────────────
+  // Load initial messages
+  // ─────────────────────────────
+  useEffect(() => {
+    const fetchMessages = async () => {
+      const { data, error } = await supabase
+        .from('collaborate_messages')
+        .select('*')
+        .order('created_at', { ascending: true });
 
+      if (error) console.error('Fetch error:', error);
+      else setMessages(data ?? []);
+    };
+
+    fetchMessages();
+
+    // ─────────────────────────────
+    // Realtime subscription
+    // ─────────────────────────────
+    const channel = supabase
+      .channel('collaborate_messages')
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'collaborate_messages' },
+        (payload) => {
+          if (payload.eventType === 'INSERT') {
+            setMessages((prev) => [...prev, payload.new as Message]);
+          }
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, []);
+
+  // ─────────────────────────────
+  // Scroll to bottom when new message appears
+  // ─────────────────────────────
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
 
+  // ─────────────────────────────
+  // Send message
+  // ─────────────────────────────
+  const sendMessage = async () => {
+    if (!newMessage.trim()) return;
+
+    const msg = {
+      sender: 'You',
+      text: newMessage,
+      timestamp: new Date().toLocaleTimeString([], {
+        hour: '2-digit',
+        minute: '2-digit',
+      }),
+    };
+
+    const { error } = await supabase.from('collaborate_messages').insert(msg);
+    if (error) {
+      console.error('Insert error:', error);
+    }
+
+    setNewMessage('');
+  };
+
+  // ─────────────────────────────
+  // Render UI
+  // ─────────────────────────────
   return (
     <div className="flex flex-col h-[calc(100vh-4rem)] bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
       {/* Header */}
